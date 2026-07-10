@@ -36,7 +36,7 @@ MINIO_SECRET_KEY = os.getenv(
     "MINIO_SECRET_KEY",
     "KQfCfEwmO7irPY4RITfszEu9f15wWoCnvwtbSRXO"
 )
-BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "manholes-data")
+BUCKET_NAME = os.getenv("MANHOLES_MINIO_BUCKET", "manholes-data")
 
 
 # ===== init selenium =====

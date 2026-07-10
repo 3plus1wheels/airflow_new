@@ -175,19 +175,26 @@ For VPS deployment:
 
 ## Data Flow
 
-On startup, the `minio-init` service creates the configured bucket if it does not already exist. The default bucket is:
+On startup, the `minio-init` service creates all generated-data buckets if absent:
 
 ```text
 flood-results-full
+initial-wl
+manholes-data
 ```
 
-Airflow uploads generated road-flood GeoJSON objects to the shared MinIO service:
+Airflow routes generated files by pipeline:
 
 ```text
 s3://flood-results-full/<run_ts>/flood_road_<run_ts>.geojson
+s3://initial-wl/dummy-files/initial_wl_<run_ts>.csv
+s3://manholes-data/<run_ts>/waterlevel_<run_ts>.csv
+s3://manholes-data/<run_ts>/rain_<run_ts>.csv
 ```
 
-The floodmap backend lists that bucket, loads the newest timestamped `flood_road_*.geojson`, and uses it for map overlays and flood-aware routing. If no Airflow object exists yet, it falls back to the bundled sample GeoJSON.
+Bucket names and initial-WL prefix are configurable with `FLOOD_MINIO_BUCKET`, `INITIAL_WL_MINIO_BUCKET`, `INITIAL_WL_MINIO_PREFIX`, and `MANHOLES_MINIO_BUCKET` in `.env`.
+
+The floodmap backend lists the flood bucket, loads newest timestamped `flood_road_*.geojson`, and uses it for map overlays and flood-aware routing. If no Airflow object exists yet, it falls back to bundled sample GeoJSON.
 
 ## Smoke Checks
 

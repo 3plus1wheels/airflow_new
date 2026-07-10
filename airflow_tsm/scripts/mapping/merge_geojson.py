@@ -25,7 +25,7 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "airflow")
 MINIO_SECRET_KEY = os.getenv(
     "MINIO_SECRET_KEY", "KQfCfEwmO7irPY4RITfszEu9f15wWoCnvwtbSRXO"
 )
-BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "flood-results-full")
+BUCKET_NAME = os.getenv("FLOOD_MINIO_BUCKET", "flood-results-full")
 
 
 def merge_geojsons(input_dir: str, output_file: str) -> bool:

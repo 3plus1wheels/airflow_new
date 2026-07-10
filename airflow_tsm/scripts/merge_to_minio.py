@@ -26,7 +26,7 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "airflow")
 MINIO_SECRET_KEY = os.getenv(
     "MINIO_SECRET_KEY", "KQfCfEwmO7irPY4RITfszEu9f15wWoCnvwtbSRXO"
 )
-BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "flood-results")
+BUCKET_NAME = os.getenv("FLOOD_MINIO_BUCKET", "flood-results-full")
 
 
 def get_s3_client():

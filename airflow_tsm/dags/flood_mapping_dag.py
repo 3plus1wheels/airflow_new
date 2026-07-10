@@ -3,6 +3,7 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import sys
 import os
+import pandas as pd
 
 
 BASE_PATH = "/opt/airflow"
