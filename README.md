@@ -55,7 +55,7 @@ THREEDI_API_KEY
 TOMORROW_API_KEY
 ORG_UUID
 MODEL_ID
-THREEDI_MODEL_ID
+
 ```
 
 For a local UI-only smoke test, the placeholders can be left in place, but real Airflow flood jobs need valid external API credentials.

@@ -39,8 +39,7 @@ x-airflow-common: &airflow-common
     FLOOD_TEST_RAIN_MM_HR: ${FLOOD_TEST_RAIN_MM_HR:-}
     TOMORROW_API_KEY: ${TOMORROW_API_KEY:?Set TOMORROW_API_KEY in .env}
     THREEDI_API_KEY: ${THREEDI_API_KEY:?Set THREEDI_API_KEY in .env}
-    MODEL_ID: ${MODEL_ID:-76591}
-    THREEDI_MODEL_ID: ${THREEDI_MODEL_ID:-${MODEL_ID:-76591}}
+    MODEL_ID: ${MODEL_ID:-78600}
     ORG_UUID: ${ORG_UUID:?Set ORG_UUID in .env}
   volumes:
     - ./airflow_tsm/dags:/opt/airflow/dags

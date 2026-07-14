@@ -9,7 +9,7 @@ import boto3
 # CONFIG
 # =========================
 THREEDI_API_KEY = os.getenv("THREEDI_API_KEY")
-MODEL_ID = int(os.getenv("THREEDI_MODEL_ID", "78136"))
+MODEL_ID = int(os.getenv("MODEL_ID", "78600"))
 BASE_URL = "https://api.3di.live/v3"
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
