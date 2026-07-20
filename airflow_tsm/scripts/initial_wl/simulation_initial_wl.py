@@ -13,7 +13,7 @@ LOCATION_LON = os.getenv("LOCATION_LON", "105.804817")
 
 THREEDI_API_KEY = os.getenv("THREEDI_API_KEY")
 ORG_UUID = os.getenv("ORG_UUID")
-MODEL_ID = int(os.getenv("MODEL_ID", "78600"))
+MODEL_ID = int(os.getenv("MODEL_ID", "83022"))
 
 SIMULATION_DURATION = int(os.getenv("SIMULATION_DURATION", 7200))
 
