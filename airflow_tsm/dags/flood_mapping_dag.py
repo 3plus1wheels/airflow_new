@@ -1,5 +1,6 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import BranchPythonOperator, PythonOperator
+from airflow.providers.standard.sensors.time_delta import TimeDeltaSensor
 from datetime import datetime, timedelta
 import sys
 import os
@@ -32,12 +33,40 @@ DEPTH_ROOT_DIR = os.path.join(DATA_PATH, "output_depths")
 ROADS_GEOJSON_PATH = os.path.join(DATA_PATH, "inputs", "toa-do-duong-hanoi.geojson")
 GEOJSON_ROOT_DIR = os.path.join(DATA_PATH, "output_geojsons")
 FINAL_OUTPUT_ROOT_DIR = os.path.join(DATA_PATH, "output_final")
+RAIN_THRESHOLD_MM_HR = float(os.getenv("FLOOD_RAIN_THRESHOLD_MM_HR", "5"))
+RAIN_CHECK_INTERVAL_SECONDS = int(os.getenv("FLOOD_RAIN_CHECK_INTERVAL_SECONDS", "900"))
+
+
+def task_check_forecast_rain(**kwargs):
+    """Choose the full pipeline only when any forecast window reaches 5 mm/h."""
+    ti = kwargs["ti"]
+    intervals = create_simulation.get_rain_forecast()
+    if not intervals:
+        raise ValueError("❌ Tomorrow.io returned no rain forecast; refusing to treat this as a dry cycle")
+
+    decision = create_simulation.evaluate_rain_gate(intervals, RAIN_THRESHOLD_MM_HR)
+    ti.xcom_push(key="rain_intervals", value=intervals)
+    ti.xcom_push(key="rain_gate_decision", value=decision)
+    print(
+        "🌧️ Rain gate: "
+        f"max={decision['max_intensity_mm_hr']:.2f} mm/h, "
+        f"threshold={decision['threshold_mm_hr']:.2f} mm/h, "
+        f"intervals={decision['interval_count']}"
+    )
+    if decision["should_run"]:
+        return "1_trigger_simulation"
+    print("✅ Dry cycle: skipping simulation, processing, and upload as a successful DAG run")
+    return "wait_before_next_rain_check"
 
 
 def task_run_simulation(**kwargs):
     ti = kwargs["ti"]
     print("🚀 1. Trigger Simulation...")
-    sim_id, _ = create_simulation.run_forecast_process(state_file_path=STATE_FILE)
+    rain_intervals = ti.xcom_pull(task_ids="0_check_forecast_rain", key="rain_intervals")
+    sim_id, _ = create_simulation.run_forecast_process(
+        state_file_path=STATE_FILE,
+        rain_intervals=rain_intervals,
+    )
     if not sim_id:
         raise ValueError("❌ Failed to create simulation")
     ti.xcom_push(key="sim_id", value=sim_id)
@@ -193,12 +222,21 @@ with DAG(
     "flood_mapping_full",
     default_args=default_args,
     description="Pipeline 3Di -> MinIO (Direct Path Passing)",
-    schedule="*/30 * * * *",
+    schedule="@continuous",
     start_date=datetime(2026, 2, 5),
     catchup=False,
     max_active_runs=1,
     tags=["3di", "flood"],
 ) as dag:
+    t0 = BranchPythonOperator(
+        task_id="0_check_forecast_rain",
+        python_callable=task_check_forecast_rain,
+    )
+    wait_for_next_check = TimeDeltaSensor(
+        task_id="wait_before_next_rain_check",
+        delta=timedelta(seconds=RAIN_CHECK_INTERVAL_SECONDS),
+        mode="reschedule",
+    )
     t1 = PythonOperator(
         task_id="1_trigger_simulation", python_callable=task_run_simulation
     )
@@ -221,4 +259,5 @@ with DAG(
         task_id="7_upload_minio", python_callable=task_upload_minio
     )
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t7
+    t0 >> t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t7
+    t0 >> wait_for_next_check

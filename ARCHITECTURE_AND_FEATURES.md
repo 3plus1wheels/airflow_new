@@ -93,7 +93,7 @@ Code references: simulation creation and polling in [create_simulation.py](airfl
 | `airflow-dag-processor` | Parses DAG files | Internal only | Mounted DAG directory |
 | `airflow-worker` | Celery task execution | Internal only | Mounted scripts/data; concurrency defaults to one |
 | `airflow-init` | DB migration, user creation, directory ownership | One-shot | Runs before Airflow services |
-| `airflow-trigger-flood-mapping` | Startup trigger | One-shot | Unpauses and triggers `flood_mapping_full` |
+| `airflow-trigger-flood-mapping` | Startup activation | One-shot | Unpauses `flood_mapping_full`; its continuous timetable creates runs |
 | `valhalla` | Valhalla 3.6.2 routing engine | `8002` | Bind-mounted Hanoi PBF/config/tiles |
 | `floodmap-backend` | Threaded Python HTTP API | `8010` | MinIO + Valhalla; bundled GeoJSON fallback |
 | `floodmap-frontend` | Static Leaflet application via nginx | `8081` | Proxies `/api/` to floodmap backend |
@@ -134,7 +134,7 @@ There is no `.airflowignore` in the current `airflow_tsm/dags` directory, so all
 
 | DAG | Schedule | Functional purpose | Current status |
 |---|---|---|---|
-| `flood_mapping_full` | Every 30 min | Full 3Di-to-road-flood-to-MinIO pipeline | Main startup-triggered DAG; partially fixture-bound |
+| `flood_mapping_full` | Continuous after prior run | Rain-gated 3Di-to-road-flood-to-MinIO pipeline | Uses `@continuous`; dry cycles wait without creating a simulation; partially fixture-bound |
 | `flood_forecast_pipeline` | Every 30 min | 3Di -> downloaded NetCDF -> depth -> GeoJSON -> merged MinIO output | Uses downloaded NetCDF correctly, but produces flood-cell output rather than road-aware output |
 | `flood_initial_wl_pipeline` | Every 30 min | Load latest initial-WL CSV, create 3Di resource, simulate, download, calculate depth, rename output | Implemented; requires valid APIs/data |
 | `initial_wl_dummy_pipeline` | Every 10 min | Generate random water levels for 22 nodes and upload CSV | Implemented synthetic producer |
@@ -143,9 +143,9 @@ There is no `.airflowignore` in the current `airflow_tsm/dags` directory, so all
 
 References: [flood_mapping_dag.py](airflow_tsm/dags/flood_mapping_dag.py#L192-L224), [flood_forecast_dag.py](airflow_tsm/dags/flood_forecast_dag.py#L124-L151), [initial_wl_dag.py](airflow_tsm/dags/initial_wl_dag.py#L195-L231), [dummy_initial_wl_dag.py](airflow_tsm/dags/dummy_initial_wl_dag.py#L25-L50), [manholes_dag.py](airflow_tsm/dags/manholes_dag.py#L23-L53), and [test_dag.py](airflow_tsm/dags/test_dag.py#L215-L246).
 
-### 4.3 Main seven-stage mapping DAG
+### 4.3 Main rain-gated seven-stage mapping DAG
 
-`flood_mapping_full` contains these sequential tasks:
+`flood_mapping_full` first evaluates a Tomorrow.io forecast gate. If every forecast interval is below 5 mm/h, the simulation-through-upload branch is skipped and a reschedule-mode wait completes the cycle successfully. Airflow's `@continuous` timetable then starts the next cycle. Qualifying forecasts enter these seven sequential tasks:
 
 1. **Trigger simulation:** fetch a Tomorrow.io precipitation forecast, select a 3Di simulation template, optionally hot-start from the prior saved state, create/start the simulation, poll it, and persist the newly scheduled state ID.
 2. **Download results:** discover the 3Di result file and stream it to the mounted results directory.
@@ -161,7 +161,9 @@ Task definitions and XCom path passing are in [flood_mapping_dag.py](airflow_tsm
 
 Implemented simulation features include:
 
-- Tomorrow.io hourly precipitation retrieval for the configured simulation duration.
+- Tomorrow.io precipitation retrieval over a configurable two-hour lookahead at 15-minute timesteps.
+- A deterministic 5 mm/h gate before any 3Di simulation call; qualifying forecast intervals are reused by the simulation task rather than fetched twice.
+- Dry-cycle reschedule waiting, defaulting to 15 minutes, before the continuous timetable starts another cycle.
 - Conversion from millimetres/hour to metres/second for 3Di rain events.
 - 3Di template lookup by model ID.
 - Cold start from template or hot start from a previously saved-state ID.
@@ -453,13 +455,14 @@ The checked-in [.env.example](.env.example#L1-L49) groups settings into:
 Important wiring notes:
 
 - `MAX_WORKERS`, `SAMPLE_RATE`, `SIMULATION_DURATION` and `UPDATE_INTERVAL` are consumed by processing code.
-- `FLOOD_MAPPING_SCHEDULE` is passed into Airflow containers but the DAG schedules are hardcoded to `*/30 * * * *`; changing the environment variable does not change them.
+- `FLOOD_RAIN_THRESHOLD_MM_HR`, `FLOOD_RAIN_LOOKAHEAD_HOURS`, `FLOOD_RAIN_TIMESTEP_MINUTES`, and `FLOOD_RAIN_CHECK_INTERVAL_SECONDS` configure the main DAG's forecast gate. `FLOOD_TEST_RAIN_MM_HR` bypasses the live weather call for deterministic local testing.
+- `flood_mapping_full` uses Airflow's `@continuous` timetable rather than a cron schedule. The separate legacy/test DAGs retain their own schedules.
 - `FLOOD_USE_DOWNLOADED_RESULTS` is passed by Compose but is not read by the current code.
 - `MIN_DEPTH_THRESHOLD` is active in the legacy extractor, but the main mapping DAG uses `mapping/extract_geojson_full.py`, where that setting is commented out. It therefore does not filter the primary mapping path.
 - `LOCAL_GEOJSON_DIR` and `KEEP_LOCAL_GEOJSON` are passed by Compose but are not read by the checked-in Airflow scripts.
 - Floodmap feature flags such as `FLOOD_USE_HARD_EXCLUDES`, `FLOOD_PROBE_EDGE_WALKABLE`, and constraint limits exist in code but are not exposed in `.env.example` or top-level Compose.
 
-References: environment pass-through in [compose.yml](compose.yml#L22-L44), hardcoded schedules in [flood_mapping_dag.py](airflow_tsm/dags/flood_mapping_dag.py#L192-L200) and [flood_forecast_dag.py](airflow_tsm/dags/flood_forecast_dag.py#L124-L132), inactive threshold in [extract_geojson_full.py](airflow_tsm/scripts/mapping/extract_geojson_full.py#L22-L23), and routing flags in [server.py](floodmap/valhalla-flood-road-test/backend/server.py#L23-L26).
+References: environment pass-through in [compose.yml](compose.yml), continuous scheduling and rain branching in [flood_mapping_dag.py](airflow_tsm/dags/flood_mapping_dag.py), the legacy schedule in [flood_forecast_dag.py](airflow_tsm/dags/flood_forecast_dag.py#L124-L132), inactive threshold in [extract_geojson_full.py](airflow_tsm/scripts/mapping/extract_geojson_full.py#L22-L23), and routing flags in [server.py](floodmap/valhalla-flood-road-test/backend/server.py#L23-L26).
 
 ## 8. Implemented, conditional, and known limitations
 

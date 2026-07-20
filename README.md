@@ -60,6 +60,10 @@ MODEL_ID
 
 For a local UI-only smoke test, the placeholders can be left in place, but real Airflow flood jobs need valid external API credentials.
 
+`flood_mapping_full` runs with Airflow's `@continuous` timetable: the next cycle starts when the previous cycle finishes. Before creating a 3Di simulation, each cycle requests a two-hour Tomorrow.io forecast at 15-minute timesteps. The full simulation-through-upload path runs only when at least one interval reaches `FLOOD_RAIN_THRESHOLD_MM_HR` (default `5` mm/h). Dry cycles finish successfully after a rescheduled wait controlled by `FLOOD_RAIN_CHECK_INTERVAL_SECONDS` (default `900`, or 15 minutes).
+
+The check frequency is configurable because Tomorrow.io rate limits are plan-specific. `900` seconds makes at most 96 dry-weather forecast calls per day; increase it if the API key's plan permits fewer calls. `FLOOD_TEST_RAIN_MM_HR` can provide a deterministic local value without calling Tomorrow.io.
+
 ### 4. Validate the Compose configuration
 
 ```bash

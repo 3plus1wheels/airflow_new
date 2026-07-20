@@ -26,6 +26,9 @@ MODEL_ID = int(os.getenv("MODEL_ID", 76591))
 
 SIMULATION_DURATION = int(os.getenv("SIMULATION_DURATION", 7200))
 UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", 900))
+RAIN_LOOKAHEAD_HOURS = float(os.getenv("FLOOD_RAIN_LOOKAHEAD_HOURS", "2"))
+RAIN_TIMESTEP_MINUTES = int(os.getenv("FLOOD_RAIN_TIMESTEP_MINUTES", "15"))
+RAIN_THRESHOLD_MM_HR = float(os.getenv("FLOOD_RAIN_THRESHOLD_MM_HR", "5"))
 
 
 def load_last_state(state_file_path):
@@ -109,16 +112,31 @@ def get_simulation_template_id(model_id):
 
 
 def get_rain_forecast():
-    """Lấy dữ liệu mưa Tomorrow.io"""
+    """Fetch the configured Tomorrow.io rain lookahead at 15-minute cadence."""
     print(f"📡 1. Lấy dữ liệu mưa Tomorrow.io...")
     now = datetime.now(timezone.utc)
-    end_time = now + timedelta(seconds=SIMULATION_DURATION)
+    end_time = now + timedelta(hours=RAIN_LOOKAHEAD_HOURS)
+
+    test_rain = os.getenv("FLOOD_TEST_RAIN_MM_HR", "").strip()
+    if test_rain:
+        rain_mm_hr = float(test_rain)
+        interval_count = int((RAIN_LOOKAHEAD_HOURS * 60) / RAIN_TIMESTEP_MINUTES)
+        print(f"🧪 Using FLOOD_TEST_RAIN_MM_HR={rain_mm_hr:g} mm/h")
+        return [
+            {
+                "startTime": (now + timedelta(minutes=RAIN_TIMESTEP_MINUTES * index))
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "values": {"precipitationIntensity": rain_mm_hr},
+            }
+            for index in range(interval_count + 1)
+        ]
 
     url = "https://api.tomorrow.io/v4/timelines"
     params = {
         "location": f"{LOCATION_LAT},{LOCATION_LON}",
         "fields": ["precipitationIntensity"],
-        "timesteps": "1h",
+        "timesteps": f"{RAIN_TIMESTEP_MINUTES}m",
         "units": "metric",
         "startTime": now.isoformat().replace("+00:00", "Z"),
         "endTime": end_time.isoformat().replace("+00:00", "Z"),
@@ -134,29 +152,69 @@ def get_rain_forecast():
         return None
 
 
-def run_forecast_process(state_file_path):
+def rain_intensity_mm_hr(interval):
+    """Read Tomorrow.io precipitation intensity, accepting the URD alias too."""
+    values = interval.get("values", {}) if isinstance(interval, dict) else {}
+    value = values.get("precipitationIntensity", values.get("rainIntensity", 0))
+    try:
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def evaluate_rain_gate(intervals, threshold_mm_hr=RAIN_THRESHOLD_MM_HR):
+    """Return the deterministic decision used before any 3Di API call."""
+    intensities = [rain_intensity_mm_hr(interval) for interval in intervals or []]
+    max_intensity = max(intensities, default=0.0)
+    return {
+        "should_run": bool(intensities) and max_intensity >= float(threshold_mm_hr),
+        "threshold_mm_hr": float(threshold_mm_hr),
+        "max_intensity_mm_hr": max_intensity,
+        "interval_count": len(intensities),
+    }
+
+
+def build_rain_values(intervals):
+    """Convert forecast intervals to 3Di [seconds, metres/second] values."""
+    if not intervals:
+        return []
+
+    def parse_time(value):
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+    try:
+        first_time = parse_time(intervals[0]["startTime"])
+    except (KeyError, TypeError, ValueError):
+        first_time = None
+
+    values = []
+    for index, interval in enumerate(intervals):
+        offset_seconds = index * RAIN_TIMESTEP_MINUTES * 60
+        if first_time is not None:
+            try:
+                offset_seconds = max(0, int((parse_time(interval["startTime"]) - first_time).total_seconds()))
+            except (KeyError, TypeError, ValueError):
+                pass
+        rain_m_s = rain_intensity_mm_hr(interval) / (1000 * 3600)
+        values.append([offset_seconds, rain_m_s])
+    return values
+
+
+def run_forecast_process(state_file_path, rain_intervals=None):
     print(f"🚀 Bắt đầu quy trình Simulation (State: {state_file_path})")
+
+    intervals = rain_intervals if rain_intervals is not None else get_rain_forecast()
+    if not intervals:
+        print("❌ Không lấy được dữ liệu mưa. Dừng.")
+        return None, None
 
     template_id = get_simulation_template_id(MODEL_ID)
     if not template_id:
         return None, None
 
-    intervals = get_rain_forecast()
-    if not intervals:
-        print("❌ Không lấy được dữ liệu mưa. Dừng.")
-        return None, None
-
     print("🔄 2. Xử lý dữ liệu mưa...")
-    rain_values = []
-
+    rain_values = build_rain_values(intervals)
     start_time_str = intervals[0]["startTime"]
-
-    for i, interval in enumerate(intervals):
-
-        val_mm_hr = interval["values"].get("precipitationIntensity", 0)
-        rain_m_s = val_mm_hr / (1000 * 3600)
-
-        rain_values.append([i * 3600, rain_m_s])
 
     headers = {"Authorization": THREEDI_API_KEY, "Content-Type": "application/json"}
     base_url = "https://api.3di.live/v3"

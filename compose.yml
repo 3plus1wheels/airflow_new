@@ -30,13 +30,16 @@ x-airflow-common: &airflow-common
     MAX_WORKERS: ${MAX_WORKERS:-1}
     SAMPLE_RATE: ${SAMPLE_RATE:-1}
     MIN_DEPTH_THRESHOLD: ${MIN_DEPTH_THRESHOLD:-0}
-    FLOOD_MAPPING_SCHEDULE: ${FLOOD_MAPPING_SCHEDULE:-*/30 * * * *}
     FLOOD_USE_DOWNLOADED_RESULTS: ${FLOOD_USE_DOWNLOADED_RESULTS:-false}
     LOCAL_GEOJSON_DIR: ${LOCAL_GEOJSON_DIR:-/opt/airflow/data/mapping/output_road_geojson}
     KEEP_LOCAL_GEOJSON: ${KEEP_LOCAL_GEOJSON:-false}
     SIMULATION_DURATION: ${SIMULATION_DURATION:-7200}
     UPDATE_INTERVAL: ${UPDATE_INTERVAL:-900}
     FLOOD_TEST_RAIN_MM_HR: ${FLOOD_TEST_RAIN_MM_HR:-}
+    FLOOD_RAIN_THRESHOLD_MM_HR: ${FLOOD_RAIN_THRESHOLD_MM_HR:-5}
+    FLOOD_RAIN_LOOKAHEAD_HOURS: ${FLOOD_RAIN_LOOKAHEAD_HOURS:-2}
+    FLOOD_RAIN_TIMESTEP_MINUTES: ${FLOOD_RAIN_TIMESTEP_MINUTES:-15}
+    FLOOD_RAIN_CHECK_INTERVAL_SECONDS: ${FLOOD_RAIN_CHECK_INTERVAL_SECONDS:-900}
     TOMORROW_API_KEY: ${TOMORROW_API_KEY:?Set TOMORROW_API_KEY in .env}
     THREEDI_API_KEY: ${THREEDI_API_KEY:?Set THREEDI_API_KEY in .env}
     MODEL_ID: ${MODEL_ID:-78600}
@@ -288,7 +291,6 @@ services:
       - -c
       - |
         /entrypoint airflow dags unpause flood_mapping_full || true
-        /entrypoint airflow dags trigger --run-id "startup__$$(date -u +%Y%m%dT%H%M%SZ)" flood_mapping_full || true
     depends_on:
       <<: *airflow-common-depends-on
       airflow-apiserver:
