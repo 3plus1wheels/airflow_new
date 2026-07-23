@@ -22,6 +22,7 @@ services:
       HOST: 0.0.0.0
       PORT: 8010
       VALHALLA_URL: http://valhalla:8002
+      PHOTON_BASE_URL: ${PHOTON_BASE_URL:-https://photon.komoot.io}
     ports:
       - "8010:8010"
     depends_on:

@@ -115,11 +115,18 @@ http://127.0.0.1:8010
 - `GET /flood/polygons?time=2026-05-22T18:00:00`
 - `GET /flood/roads?time=2026-05-22T18:00:00`
 - `GET /flood/route/forecast?origin=21.0214,105.7610&destination=21.0225,105.7650&departure_time=2026-05-22T18:00:00&mode=nonempty&alternates=2`
+- `GET /places/search?q=H%E1%BB%93%20Ho%C3%A0n%20Ki%E1%BA%BFm&lat=21.028&lon=105.852&zoom=15`
 - `POST /route/baseline`
 - `POST /route/flood-aware`
 - `POST /route/compare`
 
 `/flood/route/forecast` returns bundled motorbike/car/truck ETAs, route alternatives, 8 water-level histogram bars for the visible 4h window, and best-departure labels scanned over the next 6h. Vehicle thresholds are 20/30/50 cm for motorbike/car/truck.
+
+`/places/search` proxies Photon, restricts results to Vietnam, uses OpenStreetMap local names, and returns normalized place fields for the frontend. The free public endpoint defaults to `https://photon.komoot.io`; set `PHOTON_BASE_URL` to use another or self-hosted Photon instance.
+
+## Place Search
+
+The bilingual search pill expands inside the route sheet and searches after a 350 ms debounce. Results provide explicit Set start and Set destination actions, which update the existing coordinates and markers without automatically calculating a new route. Search data is attributed to OpenStreetMap contributors.
 
 ## Map Layers
 

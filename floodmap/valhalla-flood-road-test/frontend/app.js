@@ -1,6 +1,7 @@
 const API = window.FLOOD_API_BASE || "/api";
 const MODEL_READY_EVENT = "flood:model-ready";
 const MODEL_OUTPUT_POLL_INTERVAL_MS = 30_000;
+const SOURCE_FRESHNESS_REFRESH_INTERVAL_MS = 30_000;
 
 const VEHICLE_ORDER = ["motorbike", "car", "truck"];
 const DEFAULT_VEHICLES = {
@@ -24,12 +25,14 @@ const state = {
   currentFloodTime: "",
   currentFloodSource: "",
   currentFloodLoadedAt: "",
+  currentFloodModifiedAt: "",
   availableFloodTimesteps: [],
   floodSourceMode: "rain",
   modelGenerationId: null,
   modelGenerationModifiedAt: null,
   modelPollInFlight: false,
   modelEventInFlight: false,
+  placeSearchResults: [],
 };
 
 const map = L.map("map", { zoomControl: false }).setView([21.0219, 105.763], 16);
@@ -135,10 +138,10 @@ floodControl.addTo(map);
 
 function floodRoadStyle(depthCmValue) {
   let color = "#8ee8ff";
-  if (depthCmValue >= 50) color = "#06306f";
-  else if (depthCmValue >= 30) color = "#0b5fc6";
-  else if (depthCmValue >= 20) color = "#1c93e8";
-  else if (depthCmValue >= 10) color = "#58c7f4";
+  if (depthCmValue >= 80) color = "#06306f";
+  else if (depthCmValue >= 60) color = "#0b5fc6";
+  else if (depthCmValue >= 40) color = "#1c93e8";
+  else if (depthCmValue >= 20) color = "#58c7f4";
   return {
     color,
     weight: 6,
@@ -153,19 +156,19 @@ function floodPolygonStyle(feature) {
   let color = "#8bd7f0";
   let fillColor = "#9ee8ff";
   let fillOpacity = 0.36;
-  if (depth >= 50) {
+  if (depth >= 80) {
     color = "#062a64";
     fillColor = "#08357f";
     fillOpacity = 0.68;
-  } else if (depth >= 30) {
+  } else if (depth >= 60) {
     color = "#084aa0";
     fillColor = "#0b5fc6";
     fillOpacity = 0.58;
-  } else if (depth >= 20) {
+  } else if (depth >= 40) {
     color = "#117bd1";
     fillColor = "#1c93e8";
     fillOpacity = 0.5;
-  } else if (depth >= 10) {
+  } else if (depth >= 20) {
     color = "#3fb5e7";
     fillColor = "#58c7f4";
     fillOpacity = 0.43;
@@ -319,6 +322,114 @@ async function getJson(path, options) {
   return res.json();
 }
 
+let placeSearchTimer = null;
+let placeSearchController = null;
+
+function setPlaceSearchExpanded(expanded) {
+  const search = document.getElementById("place-search");
+  const input = document.getElementById("place-search-input");
+  const panel = document.getElementById("place-search-panel");
+  const close = document.getElementById("place-search-close");
+  search.classList.toggle("expanded", expanded);
+  input.setAttribute("aria-expanded", String(expanded));
+  panel.hidden = !expanded;
+  close.hidden = !expanded;
+}
+
+function setPlaceSearchStatus(message) {
+  document.getElementById("place-search-status").textContent = message;
+}
+
+function renderPlaceSearchResults(results) {
+  state.placeSearchResults = results;
+  const container = document.getElementById("place-search-results");
+  container.innerHTML = results
+    .map((result, index) => `
+      <li class="place-result">
+        <div class="place-result-copy">
+          <strong>${escapeHtml(result.name)}</strong>
+          <span>${escapeHtml(result.address || "Việt Nam")}</span>
+          <small class="place-result-kind">${escapeHtml(result.kind || "place")}</small>
+        </div>
+        <div class="place-result-actions">
+          <button type="button" data-place-index="${index}" data-place-target="origin">Điểm đi / Set start</button>
+          <button type="button" data-place-index="${index}" data-place-target="destination">Điểm đến / Set destination</button>
+        </div>
+      </li>
+    `)
+    .join("");
+}
+
+async function runPlaceSearch() {
+  const input = document.getElementById("place-search-input");
+  const query = input.value.trim();
+  if (query.length < 2) {
+    renderPlaceSearchResults([]);
+    setPlaceSearchStatus("Nhập ít nhất 2 ký tự / Enter at least 2 characters");
+    return;
+  }
+
+  if (placeSearchController) placeSearchController.abort();
+  const controller = new AbortController();
+  placeSearchController = controller;
+  setPlaceSearchExpanded(true);
+  setPlaceSearchStatus("Đang tìm tại Việt Nam… / Searching Vietnam…");
+
+  const center = map.getCenter();
+  const params = new URLSearchParams({
+    q: query,
+    lat: String(center.lat),
+    lon: String(center.lng),
+    zoom: String(map.getZoom()),
+  });
+  try {
+    const data = await getJson(`/places/search?${params.toString()}`, { signal: controller.signal });
+    if (controller !== placeSearchController) return;
+    const results = Array.isArray(data.results) ? data.results : [];
+    renderPlaceSearchResults(results);
+    setPlaceSearchStatus(
+      results.length
+        ? `${results.length} kết quả tại Việt Nam / ${results.length} Vietnam results`
+        : "Không tìm thấy địa điểm / No places found",
+    );
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    renderPlaceSearchResults([]);
+    setPlaceSearchStatus(error.message || "Không thể tìm kiếm / Search unavailable");
+  } finally {
+    if (controller === placeSearchController) placeSearchController = null;
+  }
+}
+
+function schedulePlaceSearch() {
+  window.clearTimeout(placeSearchTimer);
+  if (placeSearchController) {
+    placeSearchController.abort();
+    placeSearchController = null;
+  }
+  setPlaceSearchExpanded(true);
+  const query = document.getElementById("place-search-input").value.trim();
+  if (query.length < 2) {
+    renderPlaceSearchResults([]);
+    setPlaceSearchStatus("Nhập ít nhất 2 ký tự / Enter at least 2 characters");
+    return;
+  }
+  setPlaceSearchStatus("Đang chờ… / Waiting…");
+  placeSearchTimer = window.setTimeout(runPlaceSearch, 350);
+}
+
+function selectPlaceResult(index, target) {
+  const result = state.placeSearchResults[index];
+  if (!result || !["origin", "destination"].includes(target)) return;
+  const lat = Number(result.lat);
+  const lon = Number(result.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+  setInputPoint(target, { lat, lng: lon });
+  map.setView([lat, lon], Math.max(map.getZoom(), 15));
+  document.getElementById("place-search-input").value = result.name;
+  setPlaceSearchExpanded(false);
+}
+
 async function loadTimesteps() {
   const modeQuery = state.floodSourceMode === "rain" ? "?mode=nonempty" : "";
   const data = await getJson(`/flood/timesteps${modeQuery}`);
@@ -348,14 +459,43 @@ function updateFloodSourceInfo(data) {
   const fileName = source.split(/[\\/]/).pop() || source;
   state.currentFloodSource = fileName;
   state.currentFloodLoadedAt = loadedAt;
+  state.currentFloodModifiedAt = modified;
   const title = modified ? `Modified: ${formatTimestamp(modified)}` : source;
   el.innerHTML = `
     <strong>Water level source</strong>
     <span title="${escapeHtml(source)}">${escapeHtml(fileName)}</span>
     <small>${state.floodSourceMode === "rain" ? "Latest rain/non-empty file" : "Latest available file"}</small>
+    <small class="source-freshness" data-source-freshness></small>
     <small title="${escapeHtml(title)}">Pulled ${escapeHtml(formatTimestamp(loadedAt))}</small>
     <small>Latest flood time ${escapeHtml(formatTimestamp(data.latest_timestep || state.currentFloodTime))}</small>
   `;
+  refreshSourceFreshnessBadge();
+}
+
+function formatSourceFreshness(value, nowMs = Date.now()) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "unknown";
+  const minutes = Math.floor(Math.max(0, nowMs - timestamp) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes === 1) return "1 minute ago";
+  return `${minutes} minutes ago`;
+}
+
+function refreshSourceFreshnessBadge(nowMs = Date.now()) {
+  const badge = document.querySelector("[data-source-freshness]");
+  if (!badge) return;
+  const label = formatSourceFreshness(state.currentFloodModifiedAt, nowMs);
+  badge.textContent = label;
+  badge.classList.toggle("unknown", label === "unknown");
+  const accessibleLabel =
+    label === "unknown" ? "Source update time unavailable" : label === "now" ? "Source updated now" : `Source updated ${label}`;
+  badge.setAttribute("aria-label", accessibleLabel);
+}
+
+function startSourceFreshnessClock() {
+  refreshSourceFreshnessBadge();
+  const timer = window.setInterval(refreshSourceFreshnessBadge, SOURCE_FRESHNESS_REFRESH_INTERVAL_MS);
+  window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
 }
 
 function formatTimestamp(value) {
@@ -585,18 +725,27 @@ function renderHistogram() {
       <div class="histogram-labels">${labels}</div>
     </div>
     <div class="histogram-legend">
-      <span><i class="severity low"></i>&lt;10cm</span>
-      <span><i class="severity moderate"></i>10-20cm</span>
-      <span><i class="severity high"></i>20-30cm</span>
-      <span><i class="severity severe"></i>&gt;30cm</span>
+      <span><i class="severity low"></i>&lt;20cm</span>
+      <span><i class="severity moderate"></i>20-40cm</span>
+      <span><i class="severity high"></i>40-60cm</span>
+      <span><i class="severity severe"></i>60-80cm</span>
+      <span><i class="severity extreme"></i>&ge;80cm</span>
     </div>
   `;
+}
+
+function floodDepthClass(depthCmValue) {
+  if (depthCmValue >= 80) return "extreme";
+  if (depthCmValue >= 60) return "severe";
+  if (depthCmValue >= 40) return "high";
+  if (depthCmValue >= 20) return "moderate";
+  return "low";
 }
 
 function renderHistogramBar(bar, maxDepth) {
   const depth = Number(bar.depth_cm) || 0;
   const height = Math.max(8, Math.min(100, (depth / maxDepth) * 100));
-  const classes = ["water-bar", bar.severity || "low"];
+  const classes = ["water-bar", floodDepthClass(depth)];
   if (bar.is_now) classes.push("now");
   if (!bar.safe) classes.push("unsafe");
   if (height >= 24 && depth > 0) classes.push("show-value");
@@ -816,6 +965,38 @@ map.on("click", (event) => {
 
 document.getElementById("origin").addEventListener("change", refreshInputMarkers);
 document.getElementById("destination").addEventListener("change", refreshInputMarkers);
+document.getElementById("place-search-input").addEventListener("focus", () => setPlaceSearchExpanded(true));
+document.getElementById("place-search-input").addEventListener("input", schedulePlaceSearch);
+document.getElementById("place-search-input").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setPlaceSearchExpanded(false);
+    event.currentTarget.blur();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    window.clearTimeout(placeSearchTimer);
+    runPlaceSearch();
+  } else if (event.key === "ArrowDown") {
+    const firstAction = document.querySelector("#place-search-results button");
+    if (firstAction) {
+      event.preventDefault();
+      firstAction.focus();
+    }
+  }
+});
+document.getElementById("place-search-close").addEventListener("click", () => {
+  window.clearTimeout(placeSearchTimer);
+  if (placeSearchController) {
+    placeSearchController.abort();
+    placeSearchController = null;
+  }
+  setPlaceSearchExpanded(false);
+  document.getElementById("place-search-input").blur();
+});
+document.getElementById("place-search-results").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-place-index]");
+  if (!button) return;
+  selectPlaceResult(Number(button.dataset.placeIndex), button.dataset.placeTarget);
+});
 document.getElementById("pick-origin").addEventListener("click", () => {
   state.pickMode = "origin";
   state.pickRouteStep = null;
@@ -864,6 +1045,7 @@ document.getElementById("departure").value = localDateTimeValue(new Date());
 refreshInputMarkers();
 renderVehicleTabs();
 syncSourceButton();
+startSourceFreshnessClock();
 
 loadTimesteps()
   .then(loadFloodLayers)

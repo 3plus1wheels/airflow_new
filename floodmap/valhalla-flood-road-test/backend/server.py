@@ -51,6 +51,12 @@ from flood_utils import (  # noqa: E402
     vehicle_threshold_cm,
     vehicle_types,
 )
+from place_search import (  # noqa: E402
+    PlaceSearchTimeout,
+    PlaceSearchUnavailable,
+    PlaceSearchValidationError,
+    search_places,
+)
 
 
 class FloodConstraintAdapter:
@@ -912,6 +918,21 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except Exception as exc:
                 self._send(400, {"error": str(exc)})
+        elif parsed.path == "/places/search":
+            try:
+                results = search_places(
+                    qs.get("q", [""])[0],
+                    qs.get("lat", [None])[0],
+                    qs.get("lon", [None])[0],
+                    qs.get("zoom", [None])[0],
+                )
+                self._send(200, {"results": results})
+            except PlaceSearchValidationError as exc:
+                self._send(400, {"error": str(exc)})
+            except PlaceSearchTimeout:
+                self._send(504, {"error": "Place search timed out. Please try again."})
+            except PlaceSearchUnavailable:
+                self._send(502, {"error": "Place search is temporarily unavailable."})
         else:
             self._send(404, {"error": "not found"})
 

@@ -330,6 +330,7 @@ services:
       FLOOD_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
       FLOOD_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       FLOOD_LOCAL_FALLBACK: ${FLOOD_LOCAL_FALLBACK:-data/flood_road_20260522T103000.geojson}
+      PHOTON_BASE_URL: ${PHOTON_BASE_URL:-https://photon.komoot.io}
     depends_on:
       valhalla:
         condition: service_healthy
