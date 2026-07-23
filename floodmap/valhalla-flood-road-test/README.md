@@ -129,7 +129,7 @@ Leaflet renders flood visualization separately from routing:
 - Flooded road layer: road-aware LineStrings styled by depth/factor.
 - Route layers: baseline, flood-aware, and shared route overlays.
 
-The layer control can toggle polygons, roads, routes, shared segments, and markers independently. The current polygon endpoint derives display polygons from the processed flood-road GeoJSON; future flood polygon, raster, heatmap, or time-playback feeds should plug into the same `/flood/polygons` display contract.
+The Flood control toggles the polygon and flooded-road layers together. Both layers start visible. The frontend polls `/flood/timesteps?mode=nonempty` every 30 seconds, treats the first usable generation as its baseline, and dispatches `flood:model-ready` when a later MinIO generation is available. The event detail contains `generationId`, `source`, `lastModified`, and `latestTimestep`; its handler refreshes both layers before keeping them active. The current polygon endpoint derives display polygons from the processed flood-road GeoJSON; future flood polygon, raster, heatmap, or time-playback feeds should plug into the same `/flood/polygons` display contract.
 
 ## Factor Model
 

@@ -17,6 +17,7 @@ try:
     import create_simulation
     import download_result
     import calculate_depth
+    import netcdf_input
     import mapping.extract_geojson_full
     import mapping.merge_geojson
     import mapping.mapping_geojson
@@ -88,16 +89,15 @@ def task_calculate_depth(**kwargs):
     Ví dụ return: /opt/airflow/data/mapping/output_depths/a1b2c3d4
     """
     ti = kwargs["ti"]
-    # nc_path = ti.xcom_pull(task_ids="2_download_results", key="nc_path")
-    nc_path = "/opt/airflow/data/mapping/results/results_3di.nc"
-
     print("⚙️ 3. Calculating Depth...")
 
-    output_uuid_dir = calculate_depth.run_calculate_depth(
+    output_uuid_dir = netcdf_input.calculate_depth_from_download(
+        ti=ti,
+        calculate_depth_fn=calculate_depth.run_calculate_depth,
         grid_path=INPUT_GRID,
-        nc_path=nc_path,
         dem_path=INPUT_DEM,
         output_dir=DEPTH_ROOT_DIR,
+        model_id=os.getenv("MODEL_ID"),
     )
 
     return output_uuid_dir

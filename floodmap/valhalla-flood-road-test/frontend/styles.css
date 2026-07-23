@@ -161,29 +161,47 @@ body {
   overflow-wrap: anywhere;
 }
 
-.leaflet-control-layers {
-  margin: 18px;
-  padding: 8px 10px;
-  border: 1px solid rgb(255 255 255 / 12%);
+.leaflet-control-flood {
+  margin: 0 18px 18px 0;
+}
+
+.flood-control-button {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid rgb(255 255 255 / 16%);
   border-radius: 8px;
+  color: #f4f7f8;
   background: rgb(20 24 28 / 92%);
-  color: #f4f7f8;
-  font-size: 12px;
   box-shadow: 0 10px 28px rgb(0 0 0 / 22%);
+  font: 800 12px/1 system-ui, sans-serif;
 }
 
-.leaflet-control-layers label {
-  display: block;
-  color: #f4f7f8;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: none;
+.flood-control-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
 }
 
-.leaflet-control-layers input {
-  width: auto;
-  min-height: auto;
-  margin-right: 6px;
+.flood-control-button:hover {
+  border-color: rgb(105 214 238 / 70%);
+  background: rgb(31 39 44 / 96%);
+}
+
+.flood-control-button:focus-visible {
+  outline: 3px solid rgb(105 214 238 / 48%);
+  outline-offset: 2px;
+}
+
+.flood-control-button.active {
+  border-color: #69d6ee;
+  color: #102026;
+  background: #69d6ee;
 }
 
 .leaflet-bottom.leaflet-left {
@@ -957,6 +975,10 @@ input:focus {
 
   .leaflet-control-zoom {
     margin: 12px;
+  }
+
+  .leaflet-control-flood {
+    margin: 0 12px calc(74vh + 12px) 0;
   }
 
   h1 {

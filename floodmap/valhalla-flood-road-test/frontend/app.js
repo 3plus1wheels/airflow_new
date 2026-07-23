@@ -1,4 +1,6 @@
 const API = window.FLOOD_API_BASE || "/api";
+const MODEL_READY_EVENT = "flood:model-ready";
+const MODEL_OUTPUT_POLL_INTERVAL_MS = 30_000;
 
 const VEHICLE_ORDER = ["motorbike", "car", "truck"];
 const DEFAULT_VEHICLES = {
@@ -24,15 +26,19 @@ const state = {
   currentFloodLoadedAt: "",
   availableFloodTimesteps: [],
   floodSourceMode: "rain",
+  modelGenerationId: null,
+  modelGenerationModifiedAt: null,
+  modelPollInFlight: false,
+  modelEventInFlight: false,
 };
 
 const map = L.map("map", { zoomControl: false }).setView([21.0219, 105.763], 16);
 map.createPane("floodPolygonPane");
 map.getPane("floodPolygonPane").style.zIndex = 430;
 map.createPane("floodPane");
-map.getPane("floodPane").style.zIndex = 450;
+map.getPane("floodPane").style.zIndex = 575;
 map.createPane("routePane");
-map.getPane("routePane").style.zIndex = 650;
+map.getPane("routePane").style.zIndex = 550;
 L.control.zoom({ position: "topright" }).addTo(map);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 20,
@@ -50,6 +56,7 @@ sourceControl.addTo(map);
 const layers = {
   floodPolygons: L.geoJSON(null, {
     pane: "floodPolygonPane",
+    filter: (feature) => depthCm(feature.properties || {}) > 0,
     style: floodPolygonStyle,
     onEachFeature: (feature, layer) => {
       const p = feature.properties || {};
@@ -61,9 +68,10 @@ const layers = {
         ]),
       );
     },
-  }).addTo(map),
+  }),
   floodRoads: L.geoJSON(null, {
     pane: "floodPane",
+    filter: (feature) => depthCm(feature.properties || {}) > 0,
     style: (feature) => floodRoadStyle(depthCm(feature.properties || {})),
     onEachFeature: (feature, layer) => {
       const p = feature.properties || {};
@@ -81,18 +89,49 @@ const layers = {
   markers: L.layerGroup().addTo(map),
 };
 
-L.control
-  .layers(
-    null,
-    {
-      "Flood surface": layers.floodPolygons,
-      "Road detail": layers.floodRoads,
-      Routes: layers.routes,
-      Markers: layers.markers,
-    },
-    { collapsed: true },
-  )
-  .addTo(map);
+let floodControlButton = null;
+
+function setFloodLayersEnabled(enabled) {
+  [layers.floodPolygons, layers.floodRoads].forEach((layer) => {
+    if (enabled) layer.addTo(map);
+    else map.removeLayer(layer);
+  });
+  if (!floodControlButton) return;
+  floodControlButton.classList.toggle("active", enabled);
+  floodControlButton.setAttribute("aria-pressed", String(enabled));
+  const actionLabel = enabled ? "Hide flood layers" : "Show flood layers";
+  floodControlButton.setAttribute("aria-label", actionLabel);
+  floodControlButton.title = actionLabel;
+}
+
+const floodControl = L.control({ position: "bottomright" });
+floodControl.onAdd = () => {
+  const container = L.DomUtil.create("div", "leaflet-control-flood");
+  const button = L.DomUtil.create("button", "flood-control-button", container);
+  floodControlButton = button;
+  button.type = "button";
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 8.5c1.5 0 1.5-1 3-1s1.5 1 3 1 1.5-1 3-1 1.5 1 3 1 1.5-1 3-1 1.5 1 3 1" />
+      <path d="M3 12.5c1.5 0 1.5-1 3-1s1.5 1 3 1 1.5-1 3-1 1.5 1 3 1 1.5-1 3-1 1.5 1 3 1" />
+      <path d="M3 16.5c1.5 0 1.5-1 3-1s1.5 1 3 1 1.5-1 3-1 1.5 1 3 1 1.5-1 3-1 1.5 1 3 1" />
+    </svg>
+    <span>Flood</span>
+  `;
+
+  L.DomEvent.disableClickPropagation(container);
+  L.DomEvent.disableScrollPropagation(container);
+  L.DomEvent.on(button, "click", (event) => {
+    L.DomEvent.preventDefault(event);
+    L.DomEvent.stopPropagation(event);
+    const enableFlood = button.getAttribute("aria-pressed") !== "true";
+    setFloodLayersEnabled(enableFlood);
+  });
+
+  setFloodLayersEnabled(true);
+  return container;
+};
+floodControl.addTo(map);
 
 function floodRoadStyle(depthCmValue) {
   let color = "#8ee8ff";
@@ -102,8 +141,8 @@ function floodRoadStyle(depthCmValue) {
   else if (depthCmValue >= 10) color = "#58c7f4";
   return {
     color,
-    weight: 2,
-    opacity: 0.5,
+    weight: 6,
+    opacity: 0.95,
     lineCap: "round",
     lineJoin: "round",
   };
@@ -286,6 +325,7 @@ async function loadTimesteps() {
   state.availableFloodTimesteps = Array.isArray(data.timesteps) ? data.timesteps : [];
   state.currentFloodTime = data.latest_timestep || data.timesteps?.[data.timesteps.length - 1] || "";
   updateFloodSourceInfo(data);
+  return data;
 }
 
 function snapDepartureToFloodWindowStart() {
@@ -331,15 +371,15 @@ function formatTimestamp(value) {
   });
 }
 
-async function loadFloodLayers() {
-  const time = state.currentFloodTime;
+async function loadFloodLayers(options = {}) {
+  const time = options.time || state.currentFloodTime;
   const vehicle = state.activeVehicle;
   if (!time) {
     layers.floodPolygons.clearLayers();
     layers.floodRoads.clearLayers();
     return;
   }
-  const sourceMode = state.floodSourceMode === "rain" ? "nonempty" : "latest";
+  const sourceMode = options.sourceMode || (state.floodSourceMode === "rain" ? "nonempty" : "latest");
   const query = `time=${encodeURIComponent(time)}&vehicle_type=${encodeURIComponent(vehicle)}&mode=${encodeURIComponent(sourceMode)}`;
   const [polygons, roads] = await Promise.all([
     getJson(`/flood/polygons?${query}`),
@@ -350,6 +390,79 @@ async function loadFloodLayers() {
   layers.floodRoads.clearLayers();
   layers.floodRoads.addData(roads);
 }
+
+function modelGenerationFrom(data) {
+  if (!data || typeof data !== "object") return null;
+  const timesteps = Array.isArray(data.timesteps) ? data.timesteps : [];
+  const latestTimestep = data.latest_timestep || timesteps[timesteps.length - 1] || "";
+  const source = String(data.flood_geojson_source || "");
+  const lastModified = String(data.flood_geojson_last_modified || "");
+  const modifiedAt = Date.parse(lastModified);
+  if (!source || !latestTimestep || timesteps.length === 0 || !Number.isFinite(modifiedAt)) return null;
+  return {
+    generationId: JSON.stringify([source, lastModified, latestTimestep]),
+    source,
+    lastModified,
+    latestTimestep,
+  };
+}
+
+async function pollForModelOutput() {
+  if (state.modelPollInFlight) return;
+  state.modelPollInFlight = true;
+  try {
+    const data = await getJson("/flood/timesteps?mode=nonempty");
+    const generation = modelGenerationFrom(data);
+    if (!generation) return;
+    if (state.modelGenerationId === null) {
+      state.modelGenerationId = generation.generationId;
+      state.modelGenerationModifiedAt = Date.parse(generation.lastModified);
+      return;
+    }
+    if (generation.generationId === state.modelGenerationId || state.modelEventInFlight) return;
+    if (Date.parse(generation.lastModified) <= state.modelGenerationModifiedAt) return;
+    window.dispatchEvent(new CustomEvent(MODEL_READY_EVENT, { detail: generation }));
+  } catch (error) {
+    console.warn("Model output poll failed; retrying on the next interval.", error);
+  } finally {
+    state.modelPollInFlight = false;
+  }
+}
+
+async function handleModelReady(event) {
+  const generation = event.detail;
+  if (!generation || !generation.generationId || !generation.latestTimestep || state.modelEventInFlight) return;
+  state.modelEventInFlight = true;
+  try {
+    await loadFloodLayers({
+      time: generation.latestTimestep,
+      sourceMode: "nonempty",
+    });
+    state.currentFloodTime = generation.latestTimestep;
+    state.modelGenerationId = generation.generationId;
+    const modifiedAt = Date.parse(generation.lastModified);
+    if (Number.isFinite(modifiedAt)) state.modelGenerationModifiedAt = modifiedAt;
+    updateFloodSourceInfo({
+      flood_geojson_source: generation.source,
+      flood_geojson_last_modified: generation.lastModified,
+      flood_geojson_loaded_at: new Date().toISOString(),
+      latest_timestep: generation.latestTimestep,
+    });
+    setFloodLayersEnabled(true);
+  } catch (error) {
+    console.warn("New model output could not be loaded; retrying on the next interval.", error);
+  } finally {
+    state.modelEventInFlight = false;
+  }
+}
+
+function startModelOutputPolling() {
+  pollForModelOutput();
+  const timer = window.setInterval(pollForModelOutput, MODEL_OUTPUT_POLL_INTERVAL_MS);
+  window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
+}
+
+window.addEventListener(MODEL_READY_EVENT, handleModelReady);
 
 async function runForecast() {
   const origin = parsePoint(document.getElementById("origin").value);
@@ -755,4 +868,5 @@ syncSourceButton();
 loadTimesteps()
   .then(loadFloodLayers)
   .then(runForecast)
-  .catch((error) => renderStatus("fail", "ERROR", error.message));
+  .catch((error) => renderStatus("fail", "ERROR", error.message))
+  .finally(startModelOutputPolling);
